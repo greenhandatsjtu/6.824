@@ -1,10 +1,23 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"sort"
+)
 
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,7 +37,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -32,39 +44,50 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	task := CallTask()
+	file, err := os.Open(task.FileName)
+	if err != nil {
+		log.Fatalf("cannot open %v", task.FileName)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", task.FileName)
+	}
+	file.Close()
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
-
+	kva := mapf(task.FileName, string(content))
+	sort.Sort(ByKey(kva))
+	output, _ := os.OpenFile(fmt.Sprintf("mr-%d.txt", task.Number), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	enc := json.NewEncoder(output)
+	for _, kv := range kva {
+		_ = enc.Encode(&kv)
+	}
+	output.Close()
+	fmt.Println("Map done")
 }
 
-//
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
-
+func CallTask() *Task {
 	// declare an argument structure.
-	args := ExampleArgs{}
+	args := TaskArgs{}
 
 	// fill in the argument(s).
-	args.X = 99
+	args.Id = 99
 
 	// declare a reply structure.
-	reply := ExampleReply{}
+	reply := TaskReply{}
 
 	// send the RPC request, wait for the reply.
 	// the "Coordinator.Example" tells the
 	// receiving server that we'd like to call
 	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
+	ok := call("Coordinator.Task", &args, &reply)
 	if ok {
 		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
+		fmt.Printf("reply.Task.FileName %v\n", reply.Task.FileName)
 	} else {
 		fmt.Printf("call failed!\n")
 	}
+	return &reply.Task
 }
 
 //

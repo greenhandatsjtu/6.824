@@ -1,29 +1,48 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
-
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"sync"
+)
 
 type Coordinator struct {
 	// Your definitions here.
+	mutex    sync.RWMutex
+	files    []string
+	mapTasks map[string]uint64
+	nReduce  int
+}
 
+func NewCoordinator(files []string, nReduce int) *Coordinator {
+	tasks := make(map[string]uint64)
+	c := Coordinator{sync.RWMutex{}, files, tasks, nReduce}
+
+	return &c
 }
 
 // Your code here -- RPC handlers for the worker to call.
 
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
+// Task issues a map/reduce task to worker
+func (c *Coordinator) Task(args *TaskArgs, reply *TaskReply) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	for i, file := range c.files {
+		if _, ok := c.mapTasks[file]; !ok {
+			c.mapTasks[file] = args.Id
+			reply.Task = Task{
+				Type:     MapTask,
+				FileName: file,
+				Number:   i,
+			}
+			break
+		}
+	}
 	return nil
 }
-
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -50,7 +69,6 @@ func (c *Coordinator) Done() bool {
 
 	// Your code here.
 
-
 	return ret
 }
 
@@ -60,11 +78,10 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	c := NewCoordinator(files, nReduce)
 
 	// Your code here.
 
-
 	c.server()
-	return &c
+	return c
 }
