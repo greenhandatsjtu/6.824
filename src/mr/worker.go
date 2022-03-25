@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
+	"time"
 )
 
 // for sorting by key.
@@ -37,6 +38,49 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+// execTask execute a task
+func execTask(task *Task, mapf func(string, string) []KeyValue,
+	reducef func(string, []string) string) error {
+	// RPC request to fetch task
+
+	switch task.Type {
+	case MapTask:
+		fmt.Println(task.FileName)
+		file, err := os.Open(task.FileName)
+		if err != nil {
+			return err
+		}
+		content, err := ioutil.ReadAll(file)
+		if err != nil {
+			return err
+		}
+		if err = file.Close(); err != nil {
+			return err
+		}
+
+		kva := mapf(task.FileName, string(content))
+		sort.Sort(ByKey(kva))
+
+		output, err := os.OpenFile(fmt.Sprintf("mr-%d.txt", task.Number), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			return nil
+		}
+		enc := json.NewEncoder(output)
+		for _, kv := range kva {
+			if err = enc.Encode(&kv); err != nil {
+				return err
+			}
+		}
+		if err = output.Close(); err != nil {
+			return err
+		}
+	case ExitTask:
+		fmt.Println("Exiting...")
+		os.Exit(0)
+	}
+	return nil
+}
+
 //
 // main/mrworker.go calls this function.
 //
@@ -44,26 +88,15 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-	task := CallTask()
-	file, err := os.Open(task.FileName)
-	if err != nil {
-		log.Fatalf("cannot open %v", task.FileName)
+	// ask coordinator for task periodically
+	for true {
+		task := CallTask()
+		if err := execTask(task, mapf, reducef); err != nil {
+			log.Fatal(err)
+		}
+		CallFinish(task.Type, task.Number)
+		time.Sleep(time.Second)
 	}
-	content, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Fatalf("cannot read %v", task.FileName)
-	}
-	file.Close()
-
-	kva := mapf(task.FileName, string(content))
-	sort.Sort(ByKey(kva))
-	output, _ := os.OpenFile(fmt.Sprintf("mr-%d.txt", task.Number), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-	enc := json.NewEncoder(output)
-	for _, kv := range kva {
-		_ = enc.Encode(&kv)
-	}
-	output.Close()
-	fmt.Println("Map done")
 }
 
 func CallTask() *Task {
@@ -81,13 +114,17 @@ func CallTask() *Task {
 	// receiving server that we'd like to call
 	// the Example() method of struct Coordinator.
 	ok := call("Coordinator.Task", &args, &reply)
-	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Task.FileName %v\n", reply.Task.FileName)
-	} else {
-		fmt.Printf("call failed!\n")
+	if !ok {
+		fmt.Printf("call task failed!\n")
 	}
 	return &reply.Task
+}
+
+func CallFinish(taskType TaskType, number int) {
+	args := FinishArgs{taskType, number}
+	if ok := call("Coordinator.Finish", &args, nil); !ok {
+		fmt.Println("call finish failed!")
+	}
 }
 
 //

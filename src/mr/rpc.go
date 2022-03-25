@@ -14,7 +14,8 @@ import "strconv"
 type TaskType uint8
 
 const (
-	MapTask TaskType = iota
+	NopTask TaskType = iota // no task assigned
+	MapTask
 	ReduceTask
 	ExitTask
 )
@@ -31,6 +32,14 @@ type TaskArgs struct {
 
 type TaskReply struct {
 	Task Task
+}
+
+type FinishArgs struct {
+	Type   TaskType
+	Number int
+}
+
+type FinishReply struct {
 }
 
 // Cook up a unique-ish UNIX-domain socket name
