@@ -61,18 +61,26 @@ func execTask(task *Task, mapf func(string, string) []KeyValue,
 		kva := mapf(task.FileName, string(content))
 		sort.Sort(ByKey(kva))
 
-		output, err := os.OpenFile(fmt.Sprintf("mr-%d.txt", task.Number), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-		if err != nil {
-			return nil
+		var outputs []*os.File
+		var encs []*json.Encoder
+		for i := 0; i < nReduce; i++ {
+			output, err := os.OpenFile(fmt.Sprintf("mr-%d-%d.txt", task.Number, i), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+			if err != nil {
+				return err
+			}
+			outputs = append(outputs, output)
+			encs = append(encs, json.NewEncoder(output))
 		}
-		enc := json.NewEncoder(output)
 		for _, kv := range kva {
-			if err = enc.Encode(&kv); err != nil {
+			i := ihash(kv.Key) % nReduce // compute reduce task number
+			if err = encs[i].Encode(&kv); err != nil {
 				return err
 			}
 		}
-		if err = output.Close(); err != nil {
-			return err
+		for _, output := range outputs {
+			if err = output.Close(); err != nil {
+				return err
+			}
 		}
 	case ExitTask:
 		fmt.Println("Exiting...")
