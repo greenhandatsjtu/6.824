@@ -81,6 +81,9 @@ func execTask(task *Task, mapf func(string, string) []KeyValue,
 	return nil
 }
 
+var workerId int
+var nReduce int
+
 //
 // main/mrworker.go calls this function.
 //
@@ -88,6 +91,10 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	// shake hands
+	workerId, nReduce = CallShake()
+	fmt.Println(nReduce)
+
 	// ask coordinator for task periodically
 	for true {
 		task := CallTask()
@@ -99,20 +106,23 @@ func Worker(mapf func(string, string) []KeyValue,
 	}
 }
 
+// CallShake shakes hands with coordinator, receives workerId and nReduce
+func CallShake() (int, int) {
+	args := ShakeArgs{}
+	reply := ShakeReply{}
+
+	if ok := call("Coordinator.Shake", &args, &reply); !ok {
+		fmt.Println("call Shake failed!")
+	}
+	return reply.WorkerId, reply.NReduce
+}
+
+// CallTask asks coordinator for new task
 func CallTask() *Task {
-	// declare an argument structure.
-	args := TaskArgs{}
-
-	// fill in the argument(s).
-	args.Id = 99
-
-	// declare a reply structure.
+	args := TaskArgs{workerId}
 	reply := TaskReply{}
 
 	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
 	ok := call("Coordinator.Task", &args, &reply)
 	if !ok {
 		fmt.Printf("call task failed!\n")
@@ -120,6 +130,7 @@ func CallTask() *Task {
 	return &reply.Task
 }
 
+// CallFinish indicates coordinator this worker has finished a task
 func CallFinish(taskType TaskType, number int) {
 	args := FinishArgs{taskType, number}
 	if ok := call("Coordinator.Finish", &args, nil); !ok {

@@ -21,13 +21,13 @@ const (
 )
 
 type Task struct {
-	Type     TaskType
-	FileName string
-	Number   int
+	Type     TaskType // task type
+	FileName string   // map task file
+	Number   int      // task number
 }
 
 type TaskArgs struct {
-	Id uint64
+	WorkerId int // worker id
 }
 
 type TaskReply struct {
@@ -35,11 +35,19 @@ type TaskReply struct {
 }
 
 type FinishArgs struct {
-	Type   TaskType
-	Number int
+	Type   TaskType // task type
+	Number int      // task number
 }
 
 type FinishReply struct {
+}
+
+type ShakeArgs struct {
+}
+
+type ShakeReply struct {
+	WorkerId int // worker id
+	NReduce  int // number of reduce tasks
 }
 
 // Cook up a unique-ish UNIX-domain socket name

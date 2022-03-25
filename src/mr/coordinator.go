@@ -19,7 +19,6 @@ const (
 )
 
 type WorkerInfo struct {
-	uuid  string
 	alive bool
 }
 
@@ -39,6 +38,8 @@ type Coordinator struct {
 	// Your definitions here.
 	mutex sync.RWMutex
 
+	workers []WorkerInfo
+
 	mapTasks           []MapTaskInfo
 	unfinishedMapTasks int
 
@@ -53,12 +54,26 @@ func NewCoordinator(files []string, nReduce int) *Coordinator {
 		mapTasks[i].file = files[i]
 	}
 	reduceTasks := make([]ReduceTaskInfo, nReduce)
-	c := Coordinator{sync.RWMutex{}, mapTasks, len(files), reduceTasks, nReduce, nReduce}
+	c := Coordinator{sync.RWMutex{}, []WorkerInfo{}, mapTasks, len(files), reduceTasks, nReduce, nReduce}
 
 	return &c
 }
 
 // Your code here -- RPC handlers for the worker to call.
+
+// Shake shakes hands with worker, return worker id and nReduce
+func (c *Coordinator) Shake(args *ShakeArgs, reply *ShakeReply) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	// reply with worker id and nReduce
+	reply.WorkerId = len(c.workers)
+	reply.NReduce = c.nReduce
+
+	// add new worker to works list, alive at first
+	c.workers = append(c.workers, WorkerInfo{true})
+	return nil
+}
 
 // Task issues a map/reduce task to worker
 func (c *Coordinator) Task(args *TaskArgs, reply *TaskReply) error {
@@ -67,8 +82,11 @@ func (c *Coordinator) Task(args *TaskArgs, reply *TaskReply) error {
 	if c.unfinishedMapTasks > 0 {
 		for i, task := range c.mapTasks {
 			if task.taskStatus == Unassigned {
+				// update task status
 				c.mapTasks[i].taskStatus = Executing
-				// todo: update task.worker
+				// assign task to this worker
+				c.mapTasks[i].worker = &c.workers[args.WorkerId]
+
 				reply.Task = Task{
 					Type:     MapTask,
 					FileName: task.file,
@@ -80,7 +98,6 @@ func (c *Coordinator) Task(args *TaskArgs, reply *TaskReply) error {
 	} else {
 		fmt.Println("All map task finished")
 		reply.Task.Type = ExitTask
-		os.Exit(0)
 	}
 	return nil
 }
