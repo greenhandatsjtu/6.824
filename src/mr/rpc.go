@@ -47,6 +47,7 @@ type ShakeArgs struct {
 
 type ShakeReply struct {
 	WorkerId int // worker id
+	NMap     int // number of map tasks
 	NReduce  int // number of reduce tasks
 }
 

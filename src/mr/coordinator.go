@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -23,16 +22,10 @@ type WorkerInfo struct {
 }
 
 type TaskInfo struct {
-	taskStatus TaskStatus
-	worker     *WorkerInfo
+	taskStatus TaskStatus  // task status
+	worker     *WorkerInfo // task assigned worker
+	file       string      // map task file name
 }
-
-type MapTaskInfo struct {
-	TaskInfo
-	file string
-}
-
-type ReduceTaskInfo TaskInfo
 
 type Coordinator struct {
 	// Your definitions here.
@@ -40,34 +33,38 @@ type Coordinator struct {
 
 	workers []WorkerInfo
 
-	mapTasks           []MapTaskInfo
-	unfinishedMapTasks int
+	mapTasks           []TaskInfo
+	unfinishedMapTasks int // number of unfinished map tasks
+	nMap               int // number of map tasks
 
-	reduceTasks           []ReduceTaskInfo
-	unfinishedReduceTasks int
-	nReduce               int
+	reduceTasks           []TaskInfo
+	unfinishedReduceTasks int // number of unfinished reduce tasks
+	nReduce               int // number of reduce tasks
 }
 
 func NewCoordinator(files []string, nReduce int) *Coordinator {
-	mapTasks := make([]MapTaskInfo, len(files))
+	mapTasks := make([]TaskInfo, len(files))
 	for i := range mapTasks {
 		mapTasks[i].file = files[i]
 	}
-	reduceTasks := make([]ReduceTaskInfo, nReduce)
-	c := Coordinator{sync.RWMutex{}, []WorkerInfo{}, mapTasks, len(files), reduceTasks, nReduce, nReduce}
+	reduceTasks := make([]TaskInfo, nReduce)
+	c := Coordinator{sync.RWMutex{}, []WorkerInfo{}, mapTasks, len(files), len(files), reduceTasks, nReduce, nReduce}
 
 	return &c
 }
 
 // Your code here -- RPC handlers for the worker to call.
 
-// Shake shakes hands with worker, return worker id and nReduce
-func (c *Coordinator) Shake(args *ShakeArgs, reply *ShakeReply) error {
+//TODO: add health check
+
+// ShakeHands shakes hands with worker, return worker id and nReduce
+func (c *Coordinator) ShakeHands(args *ShakeArgs, reply *ShakeReply) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	// reply with worker id and nReduce
 	reply.WorkerId = len(c.workers)
+	reply.NMap = c.nMap
 	reply.NReduce = c.nReduce
 
 	// add new worker to works list, alive at first
@@ -79,24 +76,36 @@ func (c *Coordinator) Shake(args *ShakeArgs, reply *ShakeReply) error {
 func (c *Coordinator) Task(args *TaskArgs, reply *TaskReply) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	if c.unfinishedMapTasks > 0 {
-		for i, task := range c.mapTasks {
+	if c.unfinishedMapTasks > 0 || c.unfinishedReduceTasks > 0 {
+		var tasks []TaskInfo
+		var taskType TaskType
+		if c.unfinishedMapTasks > 0 {
+			// assign map tasks before all map tasks finished
+			tasks = c.mapTasks
+			taskType = MapTask
+		} else {
+			// assign reduce tasks after all map tasks finished
+			tasks = c.reduceTasks
+			taskType = ReduceTask
+		}
+		for i, task := range tasks {
 			if task.taskStatus == Unassigned {
 				// update task status
-				c.mapTasks[i].taskStatus = Executing
+				tasks[i].taskStatus = Executing
 				// assign task to this worker
-				c.mapTasks[i].worker = &c.workers[args.WorkerId]
+				tasks[i].worker = &c.workers[args.WorkerId]
 
 				reply.Task = Task{
-					Type:     MapTask,
+					Type:     taskType,
 					FileName: task.file,
 					Number:   i,
 				}
 				break
 			}
 		}
+		// all tasks assigned but some tasks unfinished, reply Nop task
+		// don't need to explicitly set task.Type to NopTask as this field is default to 0
 	} else {
-		fmt.Println("All map task finished")
 		reply.Task.Type = ExitTask
 	}
 	return nil
@@ -111,11 +120,16 @@ func (c *Coordinator) Finish(args *FinishArgs, _ *FinishReply) error {
 		c.unfinishedMapTasks--
 		c.mapTasks[args.Number].taskStatus = Finished
 		c.mapTasks[args.Number].worker = nil
-		break
+		if c.unfinishedMapTasks == 0 {
+			log.Println("All map tasks finished.")
+		}
 	case ReduceTask:
 		c.unfinishedReduceTasks--
 		c.reduceTasks[args.Number].taskStatus = Finished
 		c.reduceTasks[args.Number].worker = nil
+		if c.unfinishedReduceTasks == 0 {
+			log.Println("All reduce tasks finished.")
+		}
 	}
 	return nil
 }
@@ -142,7 +156,9 @@ func (c *Coordinator) server() {
 //
 func (c *Coordinator) Done() bool {
 	// Your code here.
-
+	// must read lock here
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
 	return c.unfinishedReduceTasks == 0
 }
 

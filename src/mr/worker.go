@@ -45,7 +45,7 @@ func execTask(task *Task, mapf func(string, string) []KeyValue,
 
 	switch task.Type {
 	case MapTask:
-		fmt.Println(task.FileName)
+		log.Printf("Worker %d\tmap task: %s\n", workerId, task.FileName)
 		file, err := os.Open(task.FileName)
 		if err != nil {
 			return err
@@ -59,12 +59,11 @@ func execTask(task *Task, mapf func(string, string) []KeyValue,
 		}
 
 		kva := mapf(task.FileName, string(content))
-		sort.Sort(ByKey(kva))
 
 		var outputs []*os.File
 		var encs []*json.Encoder
 		for i := 0; i < nReduce; i++ {
-			output, err := os.OpenFile(fmt.Sprintf("mr-%d-%d.txt", task.Number, i), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+			output, err := os.OpenFile(fmt.Sprintf("mr-%d-%d", task.Number, i), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 			if err != nil {
 				return err
 			}
@@ -82,6 +81,61 @@ func execTask(task *Task, mapf func(string, string) []KeyValue,
 				return err
 			}
 		}
+	case ReduceTask:
+		log.Printf("Worker %d\treduce task: %d\n", workerId, task.Number)
+		var kva []KeyValue
+
+		// read intermediate K/V pairs from nMap files
+		for i := 0; i < nMap; i++ {
+			file, err := os.Open(fmt.Sprintf("mr-%d-%d", i, task.Number))
+			if err != nil {
+				return err
+			}
+
+			// parse intermediate K/V pairs
+			dec := json.NewDecoder(file)
+			for {
+				var kv KeyValue
+				if err := dec.Decode(&kv); err != nil {
+					break
+				}
+				kva = append(kva, kv)
+			}
+			if err = file.Close(); err != nil {
+				return err
+			}
+		}
+
+		// create output file
+		ofile, err := os.OpenFile(fmt.Sprintf("mr-out-%d", task.Number), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			return err
+		}
+
+		sort.Sort(ByKey(kva))
+		i := 0
+		for i < len(kva) {
+			j := i + 1
+			// merge K/V pairs with identical key
+			for j < len(kva) && kva[j].Key == kva[i].Key {
+				j++
+			}
+			var values []string
+			for k := i; k < j; k++ {
+				values = append(values, kva[k].Value)
+			}
+			output := reducef(kva[i].Key, values)
+
+			// this is the correct format for each line of Reduce output.
+			if _, err = fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output); err != nil {
+				return err
+			}
+
+			i = j
+		}
+		if err = ofile.Close(); err != nil {
+			return err
+		}
 	case ExitTask:
 		fmt.Println("Exiting...")
 		os.Exit(0)
@@ -90,6 +144,7 @@ func execTask(task *Task, mapf func(string, string) []KeyValue,
 }
 
 var workerId int
+var nMap int
 var nReduce int
 
 //
@@ -100,8 +155,10 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// Your worker implementation here.
 	// shake hands
-	workerId, nReduce = CallShake()
-	fmt.Println(nReduce)
+	reply := CallShake()
+	workerId = reply.WorkerId
+	nMap = reply.NMap
+	nReduce = reply.NReduce
 
 	// ask coordinator for task periodically
 	for true {
@@ -109,20 +166,22 @@ func Worker(mapf func(string, string) []KeyValue,
 		if err := execTask(task, mapf, reducef); err != nil {
 			log.Fatal(err)
 		}
-		CallFinish(task.Type, task.Number)
+		if task.Type == MapTask || task.Type == ReduceTask {
+			CallFinish(task.Type, task.Number)
+		}
 		time.Sleep(time.Second)
 	}
 }
 
 // CallShake shakes hands with coordinator, receives workerId and nReduce
-func CallShake() (int, int) {
+func CallShake() ShakeReply {
 	args := ShakeArgs{}
 	reply := ShakeReply{}
 
-	if ok := call("Coordinator.Shake", &args, &reply); !ok {
-		fmt.Println("call Shake failed!")
+	if ok := call("Coordinator.ShakeHands", &args, &reply); !ok {
+		fmt.Println("call ShakeHands failed!")
 	}
-	return reply.WorkerId, reply.NReduce
+	return reply
 }
 
 // CallTask asks coordinator for new task
