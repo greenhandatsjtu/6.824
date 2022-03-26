@@ -42,13 +42,20 @@ type FinishArgs struct {
 type FinishReply struct {
 }
 
-type ShakeArgs struct {
+type ShakeHandsArgs struct {
 }
 
-type ShakeReply struct {
+type ShakeHandsReply struct {
 	WorkerId int // worker id
 	NMap     int // number of map tasks
 	NReduce  int // number of reduce tasks
+}
+
+type HeartbeatArgs struct {
+	WorkerId int // worker id
+}
+
+type HeartbeatReply struct {
 }
 
 // Cook up a unique-ish UNIX-domain socket name

@@ -7,6 +7,7 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 type TaskStatus uint8
@@ -19,6 +20,7 @@ const (
 
 type WorkerInfo struct {
 	alive bool
+	task  *TaskInfo // assigned task
 }
 
 type TaskInfo struct {
@@ -55,10 +57,36 @@ func NewCoordinator(files []string, nReduce int) *Coordinator {
 
 // Your code here -- RPC handlers for the worker to call.
 
-//TODO: add health check
+// healthCheck checks liveness of workers
+func (c *Coordinator) healthCheck() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	for i, worker := range c.workers {
+		// worker has crashed
+		if !worker.alive {
+			log.Printf("Worker %d has crashed\n", i)
+			// crashed worker has a task assigned to it and hasn't finished it
+			if worker.task != nil && worker.task.taskStatus == Executing {
+				// tasks assigned to this crashed worker need to be reassigned
+				c.workers[i].task.worker = nil
+				c.workers[i].task.taskStatus = Unassigned
+				c.workers[i].task = nil
+			}
+		}
+		c.workers[i].alive = false
+	}
+}
+
+// Heartbeat receives heartbeat packet from workers
+func (c *Coordinator) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.workers[args.WorkerId].alive = true
+	return nil
+}
 
 // ShakeHands shakes hands with worker, return worker id and nReduce
-func (c *Coordinator) ShakeHands(args *ShakeArgs, reply *ShakeReply) error {
+func (c *Coordinator) ShakeHands(args *ShakeHandsArgs, reply *ShakeHandsReply) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -68,7 +96,7 @@ func (c *Coordinator) ShakeHands(args *ShakeArgs, reply *ShakeReply) error {
 	reply.NReduce = c.nReduce
 
 	// add new worker to works list, alive at first
-	c.workers = append(c.workers, WorkerInfo{true})
+	c.workers = append(c.workers, WorkerInfo{true, nil})
 	return nil
 }
 
@@ -92,8 +120,10 @@ func (c *Coordinator) Task(args *TaskArgs, reply *TaskReply) error {
 			if task.taskStatus == Unassigned {
 				// update task status
 				tasks[i].taskStatus = Executing
+
 				// assign task to this worker
 				tasks[i].worker = &c.workers[args.WorkerId]
+				c.workers[args.WorkerId].task = &tasks[i]
 
 				reply.Task = Task{
 					Type:     taskType,
@@ -171,7 +201,13 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := NewCoordinator(files, nReduce)
 
 	// Your code here.
-
+	go func() {
+		for true {
+			// health check every 10 seconds
+			time.Sleep(10 * time.Second)
+			c.healthCheck()
+		}
+	}()
 	c.server()
 	return c
 }

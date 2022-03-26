@@ -160,6 +160,14 @@ func Worker(mapf func(string, string) []KeyValue,
 	nMap = reply.NMap
 	nReduce = reply.NReduce
 
+	// send heartbeat packet every 2 seconds
+	go func() {
+		for true {
+			time.Sleep(2 * time.Second)
+			CallHeartbeat()
+		}
+	}()
+
 	// ask coordinator for task periodically
 	for true {
 		task := CallTask()
@@ -174,9 +182,9 @@ func Worker(mapf func(string, string) []KeyValue,
 }
 
 // CallShake shakes hands with coordinator, receives workerId and nReduce
-func CallShake() ShakeReply {
-	args := ShakeArgs{}
-	reply := ShakeReply{}
+func CallShake() ShakeHandsReply {
+	args := ShakeHandsArgs{}
+	reply := ShakeHandsReply{}
 
 	if ok := call("Coordinator.ShakeHands", &args, &reply); !ok {
 		fmt.Println("call ShakeHands failed!")
@@ -202,6 +210,14 @@ func CallFinish(taskType TaskType, number int) {
 	args := FinishArgs{taskType, number}
 	if ok := call("Coordinator.Finish", &args, nil); !ok {
 		fmt.Println("call finish failed!")
+	}
+}
+
+// CallHeartbeat sends heartbeat packet to coordinator
+func CallHeartbeat() {
+	args := HeartbeatArgs{workerId}
+	if ok := call("Coordinator.Heartbeat", &args, nil); !ok {
+		fmt.Println("call Heartbeat failed!")
 	}
 }
 
