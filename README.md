@@ -26,6 +26,25 @@
 - Coordinator结构体
 
   ```go
+  type TaskStatus uint8
+  
+  const (
+  	Unassigned TaskStatus = iota
+  	Executing
+  	Finished
+  )
+  
+  type WorkerInfo struct {
+  	alive bool
+  	task  *TaskInfo // assigned task
+  }
+  
+  type TaskInfo struct {
+  	taskStatus TaskStatus  // task status
+  	worker     *WorkerInfo // task assigned worker
+  	file       string      // map task file name
+  }
+  
   type Coordinator struct {
      // Your definitions here.
      mutex sync.RWMutex
